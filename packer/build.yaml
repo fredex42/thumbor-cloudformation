@@ -1,4 +1,36 @@
-testdict:
-  keyone:
-    - valueone
-    - valuetwo
+description: Build a Thumbor base instance on EC2
+variables:
+  AwsRegion: eu-west-1
+  SourceAMI: ami-785db401 #default 16.04 ubuntu, eu-west-1
+builders:
+  - type: amazon-ebs
+    ami_name: Thumbor image built {{timestamp}}
+    instance_type: t2.micro
+    region: "{{user `AwsRegion`}}"
+    ssh_username: ubuntu
+    source_ami: "{{user `SourceAMI`}}"
+    # source_ami_filter:
+    #   filters:
+    #     virtualization-type: hvm
+    #     name: ubuntu/images/*ubuntu-xenial-16.04-amd64-server-*
+    #     root-device-type: ebs
+    #   owners:
+    #     - "{{user `MyAccountId`}}"
+    #   most_recent: true
+provisioners:
+  - type: file
+    source: files/thumbor.service
+    destination: /tmp/thumbor.service
+  - type: shell
+    inline:
+      - sudo apt-get -y update
+      # https://askubuntu.com/questions/146921/how-do-i-apt-get-y-dist-upgrade-without-a-grub-config-prompt
+      - sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade
+      - sudo apt-get -y install python2.7 python-pip python-wheel libssl-dev libcurl4-openssl-dev
+      - sudo useradd thumbor
+      - sudo pip install thumbor
+      - sudo mv /tmp/thumbor.service /lib/systemd/system
+      - sudo systemctl daemon-reload
+      - sudo systemctl enable thumbor
+      - sudo systemctl start thumbor
+      - curl http://localhost:8888/unsafe/300x200/http://www.waterfalls.hamilton.ca/images/Waterfall_Collage_home_sm1.jpg -D-

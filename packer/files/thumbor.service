@@ -1,0 +1,12 @@
+[Unit]
+Description="Thumbor image cropper"
+After=network.target
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+Type=simple
+User=thumbor
+ExecStart=/usr/bin/thumbor
+Restart=on-failure

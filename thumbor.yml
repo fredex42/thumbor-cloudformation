@@ -5,14 +5,20 @@ Parameters:
     Type: String
     Description: Bucket that contains code to be deployed. Instances are granted read access to this.
   AMIId:
-    Type: String
+    Type: AWS::EC2::Image::Id
     Description: AMI that contains the Thumbor packer build. Get this by running the Packer build in the cloudformation repo.
+  Keypair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Key pair to get root access to the instances created
   VPCId:
-    Type: String
+    Type: AWS::EC2::VPC::Id
     Description: VPC to deploy into
   AllowedAccessRange:
     Type: String
     Description: CIDR block of nodes that are allowd SSH access to thumbor nodes
+  DeploySubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets to deploy into
 Mappings:
 
 Resources:
@@ -54,9 +60,8 @@ Resources:
       AssociatePublicIpAddress: false
       IamInstanceProfile: !Sub ${ThumborInstanceProfile.Arn}
       ImageId: !Ref AMIId
-      InstanceType: "t2.large"
-      KeyName:
-        Ref: KeyPairName
+      InstanceType: "t2.medium"
+      KeyName: !Ref Keypair
       SecurityGroups:
         - Ref: ThumborNodeSG
       UserData:
@@ -67,23 +72,20 @@ Resources:
   ThumborELB:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     Properties:
-      Subnets:
-        - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet1a"
-        - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet1b"
-        - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet1c"
+      Subnets: !Ref DeploySubnets
       CrossZone: true
       HealthCheck:
         HealthyThreshold: "2"
         Interval: "10"
-        Target: "HTTP:80/"
+        Target: "HTTP:8888/"
         Timeout: "5"
         UnhealthyThreshold: "2"
       SecurityGroups:
         - Ref: ThumborELBSGIn
       Listeners:
-       - InstancePort: "80"
+       - InstancePort: "8888"
          InstanceProtocol: "HTTP"
-         LoadBalancerPort: "80"
+         LoadBalancerPort: "8888"
          Protocol: "HTTP"
   ThumborELBSGIn:
     Type: "AWS::EC2::SecurityGroup"
@@ -92,8 +94,8 @@ Resources:
       VpcId: !Ref VPCId
       SecurityGroupIngress:
         - IpProtocol: "tcp"
-          FromPort: "80"
-          ToPort: "80"
+          FromPort: "8888"
+          ToPort: "8888"
           CidrIp:
             Ref: AllowedAccessRange
   ThumborELBSGOut:
@@ -101,8 +103,8 @@ Resources:
     Properties:
         GroupId: !Ref ThumborELBSGIn
         IpProtocol: "tcp"
-        FromPort: "80"
-        ToPort: "80"
+        FromPort: "8888"
+        ToPort: "8888"
         DestinationSecurityGroupId:
           Ref: ThumborNodeSG
   ThumborNodeSG:
@@ -113,11 +115,17 @@ Resources:
       SecurityGroupIngress:
         - SourceSecurityGroupId:
             Ref: ThumborELBSGIn
-          FromPort: "80"
-          ToPort: "80"
+          FromPort: "8888"
+          ToPort: "8888"
           IpProtocol: "tcp"
         - CidrIp: !Ref AllowedAccessRange
           FromPort: "22"
           ToPort: "22"
           IpProtocol: "tcp"
 Outputs:
+  ThumborAddress:
+    Description: Frontend loadbalancer for this Thumbor stack
+    Value:
+      Fn::GetAtt:
+        - ThumborELB
+        - DNSName

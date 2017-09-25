@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Thumbor thumbnailing system cloud deploy
+Parameters:
+  DeploymentBucket:
+    Type: String
+    Description: Bucket that contains code to be deployed. Instances are granted read access to this.
+  AMIId:
+    Type: String
+    Description: AMI that contains the Thumbor packer build. Get this by running the Packer build in the cloudformation repo.
+  VPCId:
+    Type: String
+    Description: VPC to deploy into
+  AllowedAccessRange:
+    Type: String
+    Description: CIDR block of nodes that are allowd SSH access to thumbor nodes
+Mappings:
+
+Resources:
+  ThumborInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - Ref:
+            ThumborRole
+  ThumborRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: ''
+          Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: InstallationPolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+              - s3:HeadObject
+              - s3:GetObject
+              - s3:GetObjectAcl
+              - s3:ListBucket
+              Resource:
+              - !Sub arn:aws:s3:::${DeploymentBucket}/Thumbor
+              - !Sub arn:aws:s3:::${DeploymentBucket}/Thumbor/*
+  ThumborLC:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: false
+      IamInstanceProfile: !Sub ${ThumborInstanceProfile.Arn}
+      ImageId: !Ref AMIId
+      InstanceType: "t2.large"
+      KeyName:
+        Ref: KeyPairName
+      SecurityGroups:
+        - Ref: ThumborNodeSG
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash
+
+            echo It loaded
+  ThumborELB:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Subnets:
+        - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet1a"
+        - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet1b"
+        - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet1c"
+      CrossZone: true
+      HealthCheck:
+        HealthyThreshold: "2"
+        Interval: "10"
+        Target: "HTTP:80/"
+        Timeout: "5"
+        UnhealthyThreshold: "2"
+      SecurityGroups:
+        - Ref: ThumborELBSGIn
+      Listeners:
+       - InstancePort: "80"
+         InstanceProtocol: "HTTP"
+         LoadBalancerPort: "80"
+         Protocol: "HTTP"
+  ThumborELBSGIn:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Thumbor LB security group
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: "80"
+          ToPort: "80"
+          CidrIp:
+            Ref: AllowedAccessRange
+  ThumborELBSGOut:
+    Type: "AWS::EC2::SecurityGroupEgress"
+    Properties:
+        GroupId: !Ref ThumborELBSGIn
+        IpProtocol: "tcp"
+        FromPort: "80"
+        ToPort: "80"
+        DestinationSecurityGroupId:
+          Ref: ThumborNodeSG
+  ThumborNodeSG:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Thumbor node ports
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - SourceSecurityGroupId:
+            Ref: ThumborELBSGIn
+          FromPort: "80"
+          ToPort: "80"
+          IpProtocol: "tcp"
+        - CidrIp: !Ref AllowedAccessRange
+          FromPort: "22"
+          ToPort: "22"
+          IpProtocol: "tcp"
+Outputs:
